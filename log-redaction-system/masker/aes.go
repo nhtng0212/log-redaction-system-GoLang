@@ -143,3 +143,115 @@ func MaskDataWithAES(rawData string, secretKey string) string {
 	// Trả về chuỗi Hex để dễ dàng lưu trữ và hiển thị JSON
 	return hex.EncodeToString(encrypted)
 }
+
+// ==========================================
+// --- PHẦN GIẢI MÃ (DECRYPTION) ---
+// ==========================================
+
+var invSbox [256]byte
+
+// Hàm init() của Go tự động chạy 1 lần khi khởi động để tạo bảng Inverse S-BOX
+func init() {
+	for i, v := range sbox {
+		invSbox[v] = byte(i)
+	}
+}
+
+// mulGf là phép nhân trên trường Galois (Dịch từ mul_gf của Python)
+func mulGf(a, b byte) byte {
+	var res byte
+	for i := 0; i < 8; i++ {
+		if b&1 != 0 {
+			res ^= a
+		}
+		a = xtime(a)
+		b >>= 1
+	}
+	return res
+}
+
+func invMixColumns(s []byte) {
+	for i := 0; i < 16; i += 4 {
+		c := make([]byte, 4)
+		copy(c, s[i:i+4])
+		s[i] = mulGf(c[0], 0x0e) ^ mulGf(c[1], 0x0b) ^ mulGf(c[2], 0x0d) ^ mulGf(c[3], 0x09)
+		s[i+1] = mulGf(c[0], 0x09) ^ mulGf(c[1], 0x0e) ^ mulGf(c[2], 0x0b) ^ mulGf(c[3], 0x0d)
+		s[i+2] = mulGf(c[0], 0x0d) ^ mulGf(c[1], 0x09) ^ mulGf(c[2], 0x0e) ^ mulGf(c[3], 0x0b)
+		s[i+3] = mulGf(c[0], 0x0b) ^ mulGf(c[1], 0x0d) ^ mulGf(c[2], 0x09) ^ mulGf(c[3], 0x0e)
+	}
+}
+
+// aesDecryptBlock giải mã 1 khối 16 byte
+func aesDecryptBlock(block []byte, roundKeys [][]byte) []byte {
+	state := make([]byte, 16)
+	copy(state, block)
+
+	for i := 0; i < 16; i++ {
+		state[i] ^= roundKeys[10][i]
+	} // AddRoundKey vòng 10
+
+	for r := 9; r > 0; r-- {
+		// InvShiftRows
+		state[1], state[5], state[9], state[13] = state[13], state[1], state[5], state[9]
+		state[2], state[6], state[10], state[14] = state[10], state[14], state[2], state[6]
+		state[3], state[7], state[11], state[15] = state[7], state[11], state[15], state[3]
+		// InvSubBytes
+		for i := 0; i < 16; i++ {
+			state[i] = invSbox[state[i]]
+		}
+		// AddRoundKey
+		for i := 0; i < 16; i++ {
+			state[i] ^= roundKeys[r][i]
+		}
+		invMixColumns(state) // InvMixColumns
+	}
+
+	// Vòng cuối
+	state[1], state[5], state[9], state[13] = state[13], state[1], state[5], state[9]
+	state[2], state[6], state[10], state[14] = state[10], state[14], state[2], state[6]
+	state[3], state[7], state[11], state[15] = state[7], state[11], state[15], state[3]
+	for i := 0; i < 16; i++ {
+		state[i] = invSbox[state[i]]
+	}
+	for i := 0; i < 16; i++ {
+		state[i] ^= roundKeys[0][i]
+	}
+
+	return state
+}
+
+// DecryptDataWithAES nhận chuỗi Hex đã mã hóa, giải mã AES và trả về văn bản gốc
+func DecryptDataWithAES(hexStr string, secretKey string) string {
+	keyBytes := []byte(secretKey)
+	if len(keyBytes) < 16 {
+		padding := bytes.Repeat([]byte{0}, 16-len(keyBytes))
+		keyBytes = append(keyBytes, padding...)
+	} else {
+		keyBytes = keyBytes[:16]
+	}
+
+	encrypted, err := hex.DecodeString(hexStr)
+	// Nếu không phải chuỗi Hex hợp lệ (hoặc dữ liệu cũ), trả về nguyên bản để tránh crash
+	if err != nil || len(encrypted)%16 != 0 {
+		return hexStr
+	}
+
+	roundKeys := keyExpansion(keyBytes)
+	var decrypted []byte
+
+	for i := 0; i < len(encrypted); i += 16 {
+		block := encrypted[i : i+16]
+		decryptedBlock := aesDecryptBlock(block, roundKeys)
+		decrypted = append(decrypted, decryptedBlock...)
+	}
+
+	// Gỡ Padding PKCS#7
+	if len(decrypted) > 0 {
+		padLen := int(decrypted[len(decrypted)-1])
+		if padLen > 0 && padLen <= 16 {
+			decrypted = decrypted[:len(decrypted)-padLen]
+		}
+	}
+
+	return string(decrypted)
+}
