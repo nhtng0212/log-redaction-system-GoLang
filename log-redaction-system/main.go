@@ -10,7 +10,7 @@ func main() {
 
 	// maskedLogs := database.GetAndMaskLogs()
 
-	// fmt.Println("\n--- KẾT QUẢ DỮ LIỆU SAU KHI CHE GIẤU ---")
+	// fmt.Println("\n KẾT QUẢ DỮ LIỆU SAU KHI CHE GIẤU ")
 
 	// for _, log := range maskedLogs {
 	// 	fmt.Printf("[ID: %d | Service: %s]\n", log.ID, log.ServiceName)
@@ -20,4 +20,6 @@ func main() {
 	// }
 
 	api.StartServer()
+
+	// http://localhost:8080/api/logs
 }
