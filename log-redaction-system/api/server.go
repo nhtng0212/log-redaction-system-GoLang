@@ -56,12 +56,38 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, `{"error": "Method không được hỗ trợ"}`, http.StatusMethodNotAllowed)
 }
 
+// RawMaskHandler xử lý API 1: Lấy thô và Mask ***
+func RawMaskHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	logs := database.GetRawAndStaticMaskLogs()
+	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
+	w.Write(jsonResult)
+}
+
+// DecryptMaskHandler xử lý API 2: Giải mã và Mask ***
+func DecryptMaskHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	logs := database.GetDecryptAndStaticMaskLogs()
+	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
+	w.Write(jsonResult)
+}
+
+// StartServer khởi động Web Server và định tuyến các API
 func StartServer() {
+	// API gốc (GET/POST)
 	http.HandleFunc("/api/logs", LogsHandler)
 
+	// 2 API mới thêm vào
+	http.HandleFunc("/api/logs/raw-mask", RawMaskHandler)
+	http.HandleFunc("/api/logs/decrypted-mask", DecryptMaskHandler)
+
 	fmt.Println("🌐 Centralized Log Server đang chạy tại: http://localhost:8080")
-	fmt.Println("👉 Đọc Log (GET)   : http://localhost:8080/api/logs")
-	fmt.Println("👉 Ghi Log (POST)  : http://localhost:8080/api/logs")
+	fmt.Println("---------------------------------------------------------")
+	fmt.Println("👉 [GET] Đọc Log thật (Giải mã hoàn toàn) : http://localhost:8080/api/logs")
+	fmt.Println("👉 [GET] Đọc Log thô và Mask *** : http://localhost:8080/api/logs/raw-mask")
+	fmt.Println("👉 [GET] Giải mã rồi Mask *** : http://localhost:8080/api/logs/decrypted-mask")
+	fmt.Println("👉 [POST] Ghi Log mới (Mã hóa AES)      : http://localhost:8080/api/logs")
+	fmt.Println("---------------------------------------------------------")
 
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
