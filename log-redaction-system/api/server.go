@@ -72,21 +72,38 @@ func DecryptMaskHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonResult)
 }
 
-// StartServer khởi động Web Server và định tuyến các API
+// Handler cho thuật toán Random Mask
+func RandomMaskHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	logs := database.GetRandomMaskLogs()
+	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
+	w.Write(jsonResult)
+}
+
+// Handler cho thuật toán Insert Mask
+func InsertMaskHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	logs := database.GetInsertMaskLogs()
+	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
+	w.Write(jsonResult)
+}
+
 func StartServer() {
-	// API gốc (GET/POST)
+	// API chuẩn (GET/POST)
 	http.HandleFunc("/api/logs", LogsHandler)
 
-	// 2 API mới thêm vào
+	// Các API Masking Đa hình
 	http.HandleFunc("/api/logs/raw-mask", RawMaskHandler)
 	http.HandleFunc("/api/logs/decrypted-mask", DecryptMaskHandler)
+	http.HandleFunc("/api/logs/random-mask", RandomMaskHandler)
+	http.HandleFunc("/api/logs/insert-mask", InsertMaskHandler)
 
 	fmt.Println("🌐 Centralized Log Server đang chạy tại: http://localhost:8080")
 	fmt.Println("---------------------------------------------------------")
-	fmt.Println("👉 [GET] Đọc Log thật (Giải mã hoàn toàn) : http://localhost:8080/api/logs")
-	fmt.Println("👉 [GET] Đọc Log thô và Mask *** : http://localhost:8080/api/logs/raw-mask")
-	fmt.Println("👉 [GET] Giải mã rồi Mask *** : http://localhost:8080/api/logs/decrypted-mask")
-	fmt.Println("👉 [POST] Ghi Log mới (Mã hóa AES)      : http://localhost:8080/api/logs")
+	fmt.Println("👉 1. Xem chữ thật              : http://localhost:8080/api/logs")
+	fmt.Println("👉 2. Mask dấu sao (***)        : http://localhost:8080/api/logs/decrypted-mask")
+	fmt.Println("👉 3. Mask Ngẫu Nhiên (Random)  : http://localhost:8080/api/logs/random-mask")
+	fmt.Println("👉 4. Mask Chèn nhãn [REDACTED] : http://localhost:8080/api/logs/insert-mask")
 	fmt.Println("---------------------------------------------------------")
 
 	err := http.ListenAndServe(":8080", nil)

@@ -1,5 +1,10 @@
 package masker
 
+import (
+	"math/rand"
+	"time"
+)
+
 // Khai báo Khóa bí mật (Secret Key) dùng chung cho toàn hệ thống
 // Đã đưa về đúng 16 ký tự để chuẩn với AES-128
 const SecretKey = "LogMaskingKey123"
@@ -94,4 +99,97 @@ func StaticMaskToken(token string) string {
 		}
 	}
 	return string(result)
+}
+
+// ==========================================
+// 4. THUẬT TOÁN RANDOM MASKING (Thay thế bằng ký tự ngẫu nhiên)
+// ==========================================
+var charset = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%")
+var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+
+// RandomMaskData tự động nhận diện IP/Token và thay thế vùng nhạy cảm bằng ký tự ngẫu nhiên
+func RandomMaskData(data string) string {
+	runes := []rune(data)
+	length := len(runes)
+
+	hasDot := false
+	for _, r := range runes {
+		if r == '.' {
+			hasDot = true
+			break
+		}
+	}
+
+	// KỊCH BẢN A: Dành cho Token/Hex (Không có dấu chấm)
+	if !hasDot {
+		if length <= 10 {
+			return data
+		}
+		for i := 6; i < length-4; i++ {
+			// Chọn ngẫu nhiên 1 ký tự trong mảng charset
+			runes[i] = charset[seededRand.Intn(len(charset))]
+		}
+		return string(runes)
+	}
+
+	// KỊCH BẢN B: Dành cho IP (Có dấu chấm) -> Thay thế 2 dải mạng cuối bằng random
+	dotCount := 0
+	for i := 0; i < length; i++ {
+		if runes[i] == '.' {
+			dotCount++
+		} else if dotCount >= 2 {
+			runes[i] = charset[seededRand.Intn(len(charset))]
+		}
+	}
+	return string(runes)
+}
+
+// ==========================================
+// 5. THUẬT TOÁN INSERTION MASKING (Chèn chuỗi cảnh báo, làm lệch độ dài)
+// ==========================================
+
+// InsertMaskData cắt bỏ vùng nhạy cảm và chèn chuỗi [BỊ_CHÈN] vào
+func InsertMaskData(data string) string {
+	runes := []rune(data)
+	length := len(runes)
+	insertStr := []rune("[REDACTED]")
+
+	hasDot := false
+	for _, r := range runes {
+		if r == '.' {
+			hasDot = true
+			break
+		}
+	}
+
+	// KỊCH BẢN A: Dành cho Token (Giữ 6 đầu, chèn vào giữa, giữ 4 cuối)
+	if !hasDot {
+		if length <= 10 {
+			return data
+		}
+		// Cắt mảng (Slicing) siêu mượt của Go
+		result := append(runes[:6], insertStr...)
+		result = append(result, runes[length-4:]...)
+		return string(result)
+	}
+
+	// KỊCH BẢN B: Dành cho IP (Giữ nguyên tới sau dấu chấm thứ 2, chèn phần còn lại)
+	dotCount := 0
+	insertIndex := -1
+	for i := 0; i < length; i++ {
+		if runes[i] == '.' {
+			dotCount++
+			if dotCount == 2 {
+				insertIndex = i + 1
+				break
+			}
+		}
+	}
+
+	if insertIndex != -1 {
+		result := append(runes[:insertIndex], insertStr...)
+		return string(result)
+	}
+
+	return data
 }

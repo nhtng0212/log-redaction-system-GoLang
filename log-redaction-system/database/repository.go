@@ -121,3 +121,51 @@ func GetDecryptAndStaticMaskLogs() []models.SystemLog {
 	fmt.Printf("\n[+] Thời gian API 2 (Giải mã + Mask ***): %s\n", time.Since(start))
 	return logs
 }
+
+// ==========================================
+// 5. API EXTRA 3: Giải mã và Mask NGẪU NHIÊN (Random)
+// ==========================================
+func GetRandomMaskLogs() []models.SystemLog {
+	start := time.Now()
+	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
+	rows, _ := DB.Query(query)
+	defer rows.Close()
+
+	var logs []models.SystemLog
+	for rows.Next() {
+		var logItem models.SystemLog
+		rows.Scan(&logItem.ID, &logItem.Timestamp, &logItem.ServiceName, &logItem.IPAddress, &logItem.APIToken, &logItem.Message)
+
+		// Giải mã gốc -> Áp dụng hàm RandomMaskData
+		logItem.IPAddress = masker.RandomMaskData(masker.DecryptIP(logItem.IPAddress))
+		logItem.APIToken = masker.RandomMaskData(masker.DecryptToken(logItem.APIToken))
+
+		logs = append(logs, logItem)
+	}
+	fmt.Printf("\n[+] Thời gian API 3 (Giải mã + Random Mask): %s\n", time.Since(start))
+	return logs
+}
+
+// ==========================================
+// 6. API EXTRA 4: Giải mã và Mask CHÈN (Insert / Redaction)
+// ==========================================
+func GetInsertMaskLogs() []models.SystemLog {
+	start := time.Now()
+	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
+	rows, _ := DB.Query(query)
+	defer rows.Close()
+
+	var logs []models.SystemLog
+	for rows.Next() {
+		var logItem models.SystemLog
+		rows.Scan(&logItem.ID, &logItem.Timestamp, &logItem.ServiceName, &logItem.IPAddress, &logItem.APIToken, &logItem.Message)
+
+		// Giải mã gốc -> Áp dụng hàm InsertMaskData
+		logItem.IPAddress = masker.InsertMaskData(masker.DecryptIP(logItem.IPAddress))
+		logItem.APIToken = masker.InsertMaskData(masker.DecryptToken(logItem.APIToken))
+
+		logs = append(logs, logItem)
+	}
+	fmt.Printf("\n[+] Thời gian API 4 (Giải mã + Insert Mask): %s\n", time.Since(start))
+	return logs
+}
