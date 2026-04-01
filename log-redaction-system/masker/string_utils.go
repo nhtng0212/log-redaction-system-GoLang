@@ -1,78 +1,103 @@
+// Package masker cung cap cac ham mask va giai ma IP/token.
 package masker
 
 import (
 	"math/rand"
 	"time"
+	"unicode"
 )
 
-// Khai báo Khóa bí mật (Secret Key) dùng chung cho toàn hệ thống
-// Đã đưa về đúng 16 ký tự để chuẩn với AES-128
 const SecretKey = "LogMaskingKey123"
 
-// 1. NHÓM HÀM MÃ HÓA (DÙNG KHI LƯU VÀO DB)
-// MaskIP che giấu IP bằng thuật toán mã hóa AES-128
+// MaskIP ma hoa IP bang AES-128.
 func MaskIP(ip string) string {
 	return MaskDataWithAES(ip, SecretKey)
 }
 
-// MaskToken che giấu Token bằng thuật toán mã hóa AES-128
+// MaskToken ma hoa token bang AES-128.
 func MaskToken(token string) string {
 	return MaskDataWithAES(token, SecretKey)
 }
 
-// 2. NHÓM HÀM GIẢI MÃ (DÙNG KHI ĐỌC TỪ DB)
-// DecryptIP giải mã IP từ chuỗi mã hóa Hex
+// DecryptIP giai ma IP tu chuoi hex AES.
 func DecryptIP(encryptedIP string) string {
 	return DecryptDataWithAES(encryptedIP, SecretKey)
 }
 
-// DecryptToken giải mã Token từ chuỗi mã hóa Hex
+// DecryptToken giai ma token tu chuoi hex AES.
 func DecryptToken(encryptedToken string) string {
 	return DecryptDataWithAES(encryptedToken, SecretKey)
 }
 
-// 3. NHÓM HÀM STATIC MASKING (Che bằng dấu ***)
-// StaticMaskIP che giấu IP theo kiểu cũ (Tìm dấu chấm và thay bằng *)
+// StaticMaskIP ap dung che mat na ky tu cho du lieu IP.
 func StaticMaskIP(ip string) string {
-	runes := []rune(ip)
-	length := len(runes)
+	return CharacterMaskData(ip)
+}
 
-	// 1. Kiểm tra xem chuỗi có dấu chấm (IP thật) hay không
-	hasDot := false
+// StaticMaskToken ap dung che mat na ky tu cho token.
+func StaticMaskToken(token string) string {
+	return CharacterMaskData(token)
+}
+
+// CharacterMaskData che mat na ky tu theo nguyen tac giu ky tu nhan dien.
+// - Neu chuoi co khoang trang: moi tu giu ky tu dau, phan con lai thay bang '*'.
+// - Neu chuoi khong co khoang trang: giu ky tu dau/cuoi, phan giua thay bang '*'.
+
+
+func CharacterMaskData(data string) string {
+	runes := []rune(data)
+	if len(runes) <= 1 {
+		return data
+	}
+
+	hasSpace := false
 	for _, r := range runes {
-		if r == '.' {
-			hasDot = true
+		if unicode.IsSpace(r) {
+			hasSpace = true
 			break
 		}
 	}
 
-	// 2. Nếu KHÔNG có dấu chấm (Đây là chuỗi Hex AES)
-	// Ta sẽ giữ lại 6 ký tự đầu và 4 ký tự cuối, che toàn bộ khúc giữa
-	if !hasDot {
-		if length <= 10 {
-			return ip
-		}
-		result := make([]rune, length)
-		for i := 0; i < length; i++ {
-			if i >= 6 && i < length-4 {
+	if hasSpace {
+		result := make([]rune, len(runes))
+		inWord := false
+		isFirstCharOfWord := false
+		for i, r := range runes {
+			if unicode.IsSpace(r) {
+				result[i] = r
+				inWord = false
+				continue
+			}
+
+			if !inWord {
+				inWord = true
+				isFirstCharOfWord = true
+			}
+
+			if isFirstCharOfWord {
+				result[i] = r
+				isFirstCharOfWord = false
+				continue
+			}
+
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
 				result[i] = '*'
 			} else {
-				result[i] = runes[i]
+				result[i] = r
 			}
 		}
 		return string(result)
 	}
 
-	// 3. Nếu CÓ dấu chấm (Đây là IP thật)
-	// Ta áp dụng luật cũ: che từ sau dấu chấm thứ 2
-	result := make([]rune, length)
-	dotCount := 0
+	if len(runes) == 2 {
+		return string([]rune{runes[0], '*'})
+	}
 
-	for i := 0; i < length; i++ {
-		if runes[i] == '.' {
-			dotCount++
-			result[i] = '.'
-		} else if dotCount >= 2 {
+	result := make([]rune, len(runes))
+	result[0] = runes[0]
+	result[len(runes)-1] = runes[len(runes)-1]
+	for i := 1; i < len(runes)-1; i++ {
+		if unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) {
 			result[i] = '*'
 		} else {
 			result[i] = runes[i]
@@ -81,115 +106,102 @@ func StaticMaskIP(ip string) string {
 	return string(result)
 }
 
-// StaticMaskToken che giấu Token (Giữ 6 đầu, 4 cuối)
-func StaticMaskToken(token string) string {
-	runes := []rune(token)
-	length := len(runes)
+// RandomMaskData thay the du lieu bang du lieu gia co cung cau truc ky tu.
 
-	if length <= 10 {
-		return token
-	}
-
-	result := make([]rune, length)
-	for i := 0; i < length; i++ {
-		if i >= 6 && i < length-4 {
-			result[i] = '*'
-		} else {
-			result[i] = runes[i]
-		}
-	}
-	return string(result)
-}
-
-// ==========================================
-// 4. THUẬT TOÁN RANDOM MASKING (Thay thế bằng ký tự ngẫu nhiên)
-// ==========================================
-var charset = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%")
+var letterCharset = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+var digitCharset = []rune("0123456789")
+var noiseCharset = []rune("!@#$%^&*()-_=+[]{}:;,.?/")
 var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
-// RandomMaskData tự động nhận diện IP/Token và thay thế vùng nhạy cảm bằng ký tự ngẫu nhiên
 func RandomMaskData(data string) string {
 	runes := []rune(data)
-	length := len(runes)
-
-	hasDot := false
-	for _, r := range runes {
-		if r == '.' {
-			hasDot = true
-			break
-		}
-	}
-
-	// KỊCH BẢN A: Dành cho Token/Hex (Không có dấu chấm)
-	if !hasDot {
-		if length <= 10 {
-			return data
-		}
-		for i := 6; i < length-4; i++ {
-			// Chọn ngẫu nhiên 1 ký tự trong mảng charset
-			runes[i] = charset[seededRand.Intn(len(charset))]
-		}
-		return string(runes)
-	}
-
-	// KỊCH BẢN B: Dành cho IP (Có dấu chấm) -> Thay thế 2 dải mạng cuối bằng random
-	dotCount := 0
-	for i := 0; i < length; i++ {
-		if runes[i] == '.' {
-			dotCount++
-		} else if dotCount >= 2 {
-			runes[i] = charset[seededRand.Intn(len(charset))]
+	for i, r := range runes {
+		switch {
+		case unicode.IsLetter(r):
+			runes[i] = letterCharset[seededRand.Intn(len(letterCharset))]
+		case unicode.IsDigit(r):
+			runes[i] = digitCharset[seededRand.Intn(len(digitCharset))]
+		default:
+			// Giu nguyen ky tu phan cach de bao toan cau truc.
 		}
 	}
 	return string(runes)
 }
 
-// ==========================================
-// 5. THUẬT TOÁN INSERTION MASKING (Chèn chuỗi cảnh báo, làm lệch độ dài)
-// ==========================================
+// RandomMaskToken thay token bang du lieu gia sau khi rut gon de de hien thi.
+func RandomMaskToken(token string) string {
+	return RandomMaskData(token)
+}
 
-// InsertMaskData cắt bỏ vùng nhạy cảm và chèn chuỗi [BỊ_CHÈN] vào
+// ShuffleMaskData xao tron vi tri ky tu chu va so, giu nguyen dau cau truc ky tu dac biet.
+
+
+func ShuffleMaskData(data string) string {
+	runes := []rune(data)
+	if len(runes) <= 1 {
+		return data
+	}
+
+	letterPositions := make([]int, 0)
+	letters := make([]rune, 0)
+	digitPositions := make([]int, 0)
+	digits := make([]rune, 0)
+
+	for i, r := range runes {
+		switch {
+		case unicode.IsLetter(r):
+			letterPositions = append(letterPositions, i)
+			letters = append(letters, r)
+		case unicode.IsDigit(r):
+			digitPositions = append(digitPositions, i)
+			digits = append(digits, r)
+		}
+	}
+	seededRand.Shuffle(len(letters), func(i, j int) {
+		letters[i], letters[j] = letters[j], letters[i]
+	})
+	seededRand.Shuffle(len(digits), func(i, j int) {
+		digits[i], digits[j] = digits[j], digits[i]
+	})
+	for i, pos := range letterPositions {
+		runes[pos] = letters[i]
+	}
+	for i, pos := range digitPositions {
+		runes[pos] = digits[i]
+	}
+	return string(runes)
+}
+
+// ShuffleMaskToken xao tron token sau khi rut gon de de hien thi.
+func ShuffleMaskToken(token string) string {
+	return ShuffleMaskData(token)
+}
+
+// InsertMaskData them nhieu vao du lieu bang cach chen ky tu ngau nhien.
+// Ky tu goc duoc giu nguyen thu tu, nhung du lieu dau ra dai hon va kho phan tich hon.
+
 func InsertMaskData(data string) string {
 	runes := []rune(data)
-	length := len(runes)
-	insertStr := []rune("[REDACTED]")
+	if len(runes) == 0 {
+		return data
+	}
 
-	hasDot := false
+	result := make([]rune, 0, len(runes)*2)
 	for _, r := range runes {
-		if r == '.' {
-			hasDot = true
-			break
+		result = append(result, r)
+		if unicode.IsSpace(r) {
+			continue
+		}
+
+		noiseLen := 1 + seededRand.Intn(2)
+		for i := 0; i < noiseLen; i++ {
+			result = append(result, noiseCharset[seededRand.Intn(len(noiseCharset))])
 		}
 	}
+	return string(result)
+}
 
-	// KỊCH BẢN A: Dành cho Token (Giữ 6 đầu, chèn vào giữa, giữ 4 cuối)
-	if !hasDot {
-		if length <= 10 {
-			return data
-		}
-		// Cắt mảng (Slicing) siêu mượt của Go
-		result := append(runes[:6], insertStr...)
-		result = append(result, runes[length-4:]...)
-		return string(result)
-	}
-
-	// KỊCH BẢN B: Dành cho IP (Giữ nguyên tới sau dấu chấm thứ 2, chèn phần còn lại)
-	dotCount := 0
-	insertIndex := -1
-	for i := 0; i < length; i++ {
-		if runes[i] == '.' {
-			dotCount++
-			if dotCount == 2 {
-				insertIndex = i + 1
-				break
-			}
-		}
-	}
-
-	if insertIndex != -1 {
-		result := append(runes[:insertIndex], insertStr...)
-		return string(result)
-	}
-
-	return data
+// InsertMaskToken them nhieu vao token da rut gon de tranh dau ra qua dai.
+func InsertMaskToken(token string) string {
+	return InsertMaskData(token)
 }

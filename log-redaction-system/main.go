@@ -1,3 +1,4 @@
+// Package main khoi dong API server cho he thong log redaction.
 package main
 
 import (
@@ -5,21 +6,8 @@ import (
 	"log-redaction-system/database"
 )
 
+// main ket noi DB va chay HTTP server.
 func main() {
 	database.ConnectDB()
-
-	// maskedLogs := database.GetAndMaskLogs()
-
-	// fmt.Println("\n KẾT QUẢ DỮ LIỆU SAU KHI CHE GIẤU ")
-
-	// for _, log := range maskedLogs {
-	// 	fmt.Printf("[ID: %d | Service: %s]\n", log.ID, log.ServiceName)
-	// 	fmt.Printf("   |─ IP: %s\n", log.IPAddress)
-	// 	fmt.Printf("   ├─ Token: %s\n", log.APIToken)
-	// 	fmt.Printf("   └─ Message: %s\n\n", log.Message)
-	// }
-
 	api.StartServer()
-
-	// http://localhost:8080/api/logs
 }

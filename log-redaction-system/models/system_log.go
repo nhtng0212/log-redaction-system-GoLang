@@ -1,5 +1,7 @@
+// Package models dinh nghia cac cau truc du lieu cho log.
 package models
 
+// SystemLog dai dien mot ban ghi log trao doi qua API va luu trong DB.
 type SystemLog struct {
 	ID          int    `json:"id"`
 	Timestamp   string `json:"timestamp"`

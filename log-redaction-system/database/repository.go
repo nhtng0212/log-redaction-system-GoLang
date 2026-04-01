@@ -1,3 +1,4 @@
+// Package database xu ly luu tru va truy xuat log da ma hoa.
 package database
 
 import (
@@ -9,17 +10,11 @@ import (
 	"log-redaction-system/models"
 )
 
-// ==========================================
-// 1. LUỒNG POST: NHẬN LOG TỪ MICROSERVICE VÀ LƯU MÃ HÓA
-// ==========================================
+// SaveLog ma hoa IP va token roi luu vao bang system_logs_aes.
 func SaveLog(logItem models.SystemLog) error {
 	start := time.Now()
-
-	// 1. Mã hóa dữ liệu ngay trên RAM (Encryption at Rest) bằng AES
 	encIP := masker.MaskIP(logItem.IPAddress)
 	encToken := masker.MaskToken(logItem.APIToken)
-
-	// 2. Lưu chuỗi đã mã hóa vào bảng chuyên dụng AES
 	query := "INSERT INTO system_logs_aes (service_name, ip_address, api_token, message) VALUES (?, ?, ?, ?)"
 	_, err := DB.Exec(query, logItem.ServiceName, encIP, encToken, logItem.Message)
 
@@ -32,13 +27,9 @@ func SaveLog(logItem models.SystemLog) error {
 	return err
 }
 
-// ==========================================
-// 2. LUỒNG GET: ĐỌC DỮ LIỆU TỪ KÉT VÀ GIẢI MÃ CHO ADMIN
-// ==========================================
+// GetAndDecryptLogs doc log tu DB va giai ma IP/token cho admin.
 func GetAndDecryptLogs() []models.SystemLog {
 	start := time.Now()
-
-	// 1. Lấy dữ liệu (đang ở dạng chuỗi Hex loằng ngoằng) từ bảng AES
 	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
 	rows, err := DB.Query(query)
 	if err != nil {
@@ -56,8 +47,6 @@ func GetAndDecryptLogs() []models.SystemLog {
 			log.Printf("[-] Lỗi đọc dòng dữ liệu: %v", err)
 			continue
 		}
-
-		// 2. GIẢI MÃ: Biến chuỗi Hex trở lại thành IP và Token thật
 		logItem.IPAddress = masker.DecryptIP(logItem.IPAddress)
 		logItem.APIToken = masker.DecryptToken(logItem.APIToken)
 
@@ -70,9 +59,7 @@ func GetAndDecryptLogs() []models.SystemLog {
 	return logs
 }
 
-// ==========================================
-// 3. API EXTRA 1: Lấy thô từ DB và Mask *** (Không giải mã)
-// ==========================================
+// GetRawAndStaticMaskLogs lay du lieu AES tho va mask tinh truc tiep.
 func GetRawAndStaticMaskLogs() []models.SystemLog {
 	start := time.Now()
 	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
@@ -83,8 +70,6 @@ func GetRawAndStaticMaskLogs() []models.SystemLog {
 	for rows.Next() {
 		var logItem models.SystemLog
 		rows.Scan(&logItem.ID, &logItem.Timestamp, &logItem.ServiceName, &logItem.IPAddress, &logItem.APIToken, &logItem.Message)
-
-		// KHÔNG GIẢI MÃ: Đè thẳng thuật toán *** lên chuỗi Hex AES
 		logItem.IPAddress = masker.StaticMaskIP(logItem.IPAddress)
 		logItem.APIToken = masker.StaticMaskToken(logItem.APIToken)
 
@@ -94,9 +79,7 @@ func GetRawAndStaticMaskLogs() []models.SystemLog {
 	return logs
 }
 
-// ==========================================
-// 4. API EXTRA 2: Lấy thô, GIẢI MÃ AES, rồi mới Mask ***
-// ==========================================
+// GetDecryptAndStaticMaskLogs giai ma du lieu AES roi mask tinh.
 func GetDecryptAndStaticMaskLogs() []models.SystemLog {
 	start := time.Now()
 	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
@@ -107,12 +90,8 @@ func GetDecryptAndStaticMaskLogs() []models.SystemLog {
 	for rows.Next() {
 		var logItem models.SystemLog
 		rows.Scan(&logItem.ID, &logItem.Timestamp, &logItem.ServiceName, &logItem.IPAddress, &logItem.APIToken, &logItem.Message)
-
-		// BƯỚC 1: Giải mã chuỗi Hex về IP/Token thật
 		realIP := masker.DecryptIP(logItem.IPAddress)
 		realToken := masker.DecryptToken(logItem.APIToken)
-
-		// BƯỚC 2: Áp dụng thuật toán *** lên IP/Token thật
 		logItem.IPAddress = masker.StaticMaskIP(realIP)
 		logItem.APIToken = masker.StaticMaskToken(realToken)
 
@@ -122,9 +101,7 @@ func GetDecryptAndStaticMaskLogs() []models.SystemLog {
 	return logs
 }
 
-// ==========================================
-// 5. API EXTRA 3: Giải mã và Mask NGẪU NHIÊN (Random)
-// ==========================================
+// GetRandomMaskLogs giai ma du lieu AES roi mask ngau nhien.
 func GetRandomMaskLogs() []models.SystemLog {
 	start := time.Now()
 	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
@@ -135,10 +112,8 @@ func GetRandomMaskLogs() []models.SystemLog {
 	for rows.Next() {
 		var logItem models.SystemLog
 		rows.Scan(&logItem.ID, &logItem.Timestamp, &logItem.ServiceName, &logItem.IPAddress, &logItem.APIToken, &logItem.Message)
-
-		// Giải mã gốc -> Áp dụng hàm RandomMaskData
 		logItem.IPAddress = masker.RandomMaskData(masker.DecryptIP(logItem.IPAddress))
-		logItem.APIToken = masker.RandomMaskData(masker.DecryptToken(logItem.APIToken))
+		logItem.APIToken = masker.RandomMaskToken(masker.DecryptToken(logItem.APIToken))
 
 		logs = append(logs, logItem)
 	}
@@ -146,9 +121,7 @@ func GetRandomMaskLogs() []models.SystemLog {
 	return logs
 }
 
-// ==========================================
-// 6. API EXTRA 4: Giải mã và Mask CHÈN (Insert / Redaction)
-// ==========================================
+// GetInsertMaskLogs giai ma du lieu AES roi mask chen nhan.
 func GetInsertMaskLogs() []models.SystemLog {
 	start := time.Now()
 	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
@@ -159,13 +132,31 @@ func GetInsertMaskLogs() []models.SystemLog {
 	for rows.Next() {
 		var logItem models.SystemLog
 		rows.Scan(&logItem.ID, &logItem.Timestamp, &logItem.ServiceName, &logItem.IPAddress, &logItem.APIToken, &logItem.Message)
-
-		// Giải mã gốc -> Áp dụng hàm InsertMaskData
 		logItem.IPAddress = masker.InsertMaskData(masker.DecryptIP(logItem.IPAddress))
-		logItem.APIToken = masker.InsertMaskData(masker.DecryptToken(logItem.APIToken))
+		logItem.APIToken = masker.InsertMaskToken(masker.DecryptToken(logItem.APIToken))
 
 		logs = append(logs, logItem)
 	}
 	fmt.Printf("\n[+] Thời gian API 4 (Giải mã + Insert Mask): %s\n", time.Since(start))
+	return logs
+}
+
+// GetShuffleMaskLogs giai ma du lieu AES roi xao tron ky tu du lieu.
+func GetShuffleMaskLogs() []models.SystemLog {
+	start := time.Now()
+	query := "SELECT id, timestamp, service_name, ip_address, api_token, message FROM system_logs_aes ORDER BY id DESC LIMIT 1000"
+	rows, _ := DB.Query(query)
+	defer rows.Close()
+
+	var logs []models.SystemLog
+	for rows.Next() {
+		var logItem models.SystemLog
+		rows.Scan(&logItem.ID, &logItem.Timestamp, &logItem.ServiceName, &logItem.IPAddress, &logItem.APIToken, &logItem.Message)
+		logItem.IPAddress = masker.ShuffleMaskData(masker.DecryptIP(logItem.IPAddress))
+		logItem.APIToken = masker.ShuffleMaskToken(masker.DecryptToken(logItem.APIToken))
+
+		logs = append(logs, logItem)
+	}
+	fmt.Printf("\n[+] Thời gian API 5 (Giải mã + Shuffle Mask): %s\n", time.Since(start))
 	return logs
 }

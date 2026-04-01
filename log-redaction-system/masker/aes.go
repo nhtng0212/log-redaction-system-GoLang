@@ -1,3 +1,4 @@
+// Package masker cung cap AES-128 cho che giau va giai ma du lieu.
 package masker
 
 import (
@@ -5,7 +6,6 @@ import (
 	"encoding/hex"
 )
 
-// Khai báo SBOX và RCON (Giống hệt Python)
 var sbox = [256]byte{
 	0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
 	0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
@@ -25,6 +25,8 @@ var sbox = [256]byte{
 	0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16,
 }
 var rcon = []byte{0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36}
+// xtime nhan mot byte trong GF(2^8) theo quy tac AES.
+
 
 func xtime(a byte) byte {
 	if a&0x80 != 0 {
@@ -33,9 +35,10 @@ func xtime(a byte) byte {
 	return a << 1
 }
 
-// keyExpansion mở rộng khóa 16 byte thành 11 khóa vòng (Round Keys)
+// keyExpansion mo rong khoa 16 byte thanh 11 round keys.
+
 func keyExpansion(key []byte) [][]byte {
-	w := make([]byte, 176) // 11 vòng * 16 byte = 176 byte
+	w := make([]byte, 176)
 	copy(w, key)
 
 	for i := 4; i < 44; i++ {
@@ -43,7 +46,6 @@ func keyExpansion(key []byte) [][]byte {
 		copy(temp, w[(i-1)*4:i*4])
 
 		if i%4 == 0 {
-			// RotWord & SubWord
 			t := temp[0]
 			temp[0] = sbox[temp[1]] ^ rcon[i/4]
 			temp[1] = sbox[temp[2]]
@@ -62,6 +64,8 @@ func keyExpansion(key []byte) [][]byte {
 	return roundKeys
 }
 
+// mixColumns ap dung phep MixColumns cho trang thai 16 byte.
+
 func mixColumns(s []byte) {
 	for i := 0; i < 16; i += 4 {
 		c := make([]byte, 4)
@@ -74,31 +78,26 @@ func mixColumns(s []byte) {
 	}
 }
 
-// aesEncryptBlock mã hóa 1 khối 16 byte (giữ nguyên logic aes_main của bạn)
+// aesEncryptBlock ma hoa mot khoi 16 byte theo AES-128.
+
 func aesEncryptBlock(block []byte, roundKeys [][]byte) []byte {
 	state := make([]byte, 16)
 	copy(state, block)
-
-	// AddRoundKey vòng 0
 	for i := 0; i < 16; i++ {
 		state[i] ^= roundKeys[0][i]
 	}
-
-	// 9 Vòng lặp chính
 	for r := 1; r < 10; r++ {
 		for i := 0; i < 16; i++ {
 			state[i] = sbox[state[i]]
-		} // SubBytes
-		state[1], state[5], state[9], state[13] = state[5], state[9], state[13], state[1] // ShiftRows
+		}
+		state[1], state[5], state[9], state[13] = state[5], state[9], state[13], state[1]
 		state[2], state[6], state[10], state[14] = state[10], state[14], state[2], state[6]
 		state[3], state[7], state[11], state[15] = state[15], state[3], state[7], state[11]
-		mixColumns(state) // MixColumns
+		mixColumns(state)
 		for i := 0; i < 16; i++ {
 			state[i] ^= roundKeys[r][i]
-		} // AddRoundKey
+		}
 	}
-
-	// Vòng cuối (Không có MixColumns)
 	for i := 0; i < 16; i++ {
 		state[i] = sbox[state[i]]
 	}
@@ -112,10 +111,10 @@ func aesEncryptBlock(block []byte, roundKeys [][]byte) []byte {
 	return state
 }
 
-// MaskDataWithAES là hàm chính bọc toàn bộ chuỗi string -> mã hóa AES -> trả về Hex String
+// MaskDataWithAES ma hoa chuoi bang AES-128 va tra ve chuoi hex.
+
 func MaskDataWithAES(rawData string, secretKey string) string {
 	keyBytes := []byte(secretKey)
-	// Đảm bảo key đúng 16 byte
 	if len(keyBytes) < 16 {
 		padding := bytes.Repeat([]byte{0}, 16-len(keyBytes))
 		keyBytes = append(keyBytes, padding...)
@@ -124,40 +123,31 @@ func MaskDataWithAES(rawData string, secretKey string) string {
 	}
 
 	dataBytes := []byte(rawData)
-
-	// PKCS#7 Padding
 	padLen := 16 - (len(dataBytes) % 16)
 	padding := bytes.Repeat([]byte{byte(padLen)}, padLen)
 	dataToEncrypt := append(dataBytes, padding...)
 
 	roundKeys := keyExpansion(keyBytes)
 	var encrypted []byte
-
-	// Mã hóa từng khối 16 byte
 	for i := 0; i < len(dataToEncrypt); i += 16 {
 		block := dataToEncrypt[i : i+16]
 		encryptedBlock := aesEncryptBlock(block, roundKeys)
 		encrypted = append(encrypted, encryptedBlock...)
 	}
-
-	// Trả về chuỗi Hex để dễ dàng lưu trữ và hiển thị JSON
 	return hex.EncodeToString(encrypted)
 }
 
-// ==========================================
-// --- PHẦN GIẢI MÃ (DECRYPTION) ---
-// ==========================================
-
 var invSbox [256]byte
 
-// Hàm init() của Go tự động chạy 1 lần khi khởi động để tạo bảng Inverse S-BOX
+// init khoi tao bang inverse S-Box cho giai ma.
 func init() {
 	for i, v := range sbox {
 		invSbox[v] = byte(i)
 	}
 }
 
-// mulGf là phép nhân trên trường Galois (Dịch từ mul_gf của Python)
+// mulGf nhan hai byte trong GF(2^8).
+
 func mulGf(a, b byte) byte {
 	var res byte
 	for i := 0; i < 8; i++ {
@@ -170,6 +160,9 @@ func mulGf(a, b byte) byte {
 	return res
 }
 
+// invMixColumns ap dung phep InvMixColumns cho trang thai 16 byte.
+
+
 func invMixColumns(s []byte) {
 	for i := 0; i < 16; i += 4 {
 		c := make([]byte, 4)
@@ -181,32 +174,28 @@ func invMixColumns(s []byte) {
 	}
 }
 
-// aesDecryptBlock giải mã 1 khối 16 byte
+// aesDecryptBlock giai ma mot khoi 16 byte theo AES-128.
+
 func aesDecryptBlock(block []byte, roundKeys [][]byte) []byte {
 	state := make([]byte, 16)
 	copy(state, block)
 
 	for i := 0; i < 16; i++ {
 		state[i] ^= roundKeys[10][i]
-	} // AddRoundKey vòng 10
+	}
 
 	for r := 9; r > 0; r-- {
-		// InvShiftRows
 		state[1], state[5], state[9], state[13] = state[13], state[1], state[5], state[9]
 		state[2], state[6], state[10], state[14] = state[10], state[14], state[2], state[6]
 		state[3], state[7], state[11], state[15] = state[7], state[11], state[15], state[3]
-		// InvSubBytes
 		for i := 0; i < 16; i++ {
 			state[i] = invSbox[state[i]]
 		}
-		// AddRoundKey
 		for i := 0; i < 16; i++ {
 			state[i] ^= roundKeys[r][i]
 		}
-		invMixColumns(state) // InvMixColumns
+		invMixColumns(state)
 	}
-
-	// Vòng cuối
 	state[1], state[5], state[9], state[13] = state[13], state[1], state[5], state[9]
 	state[2], state[6], state[10], state[14] = state[10], state[14], state[2], state[6]
 	state[3], state[7], state[11], state[15] = state[7], state[11], state[15], state[3]
@@ -220,7 +209,7 @@ func aesDecryptBlock(block []byte, roundKeys [][]byte) []byte {
 	return state
 }
 
-// DecryptDataWithAES nhận chuỗi Hex đã mã hóa, giải mã AES và trả về văn bản gốc
+// DecryptDataWithAES giai ma chuoi hex bang AES-128 va tra ve chuoi goc.
 func DecryptDataWithAES(hexStr string, secretKey string) string {
 	keyBytes := []byte(secretKey)
 	if len(keyBytes) < 16 {
@@ -231,7 +220,6 @@ func DecryptDataWithAES(hexStr string, secretKey string) string {
 	}
 
 	encrypted, err := hex.DecodeString(hexStr)
-	// Nếu không phải chuỗi Hex hợp lệ (hoặc dữ liệu cũ), trả về nguyên bản để tránh crash
 	if err != nil || len(encrypted)%16 != 0 {
 		return hexStr
 	}
@@ -244,8 +232,6 @@ func DecryptDataWithAES(hexStr string, secretKey string) string {
 		decryptedBlock := aesDecryptBlock(block, roundKeys)
 		decrypted = append(decrypted, decryptedBlock...)
 	}
-
-	// Gỡ Padding PKCS#7
 	if len(decrypted) > 0 {
 		padLen := int(decrypted[len(decrypted)-1])
 		if padLen > 0 && padLen <= 16 {

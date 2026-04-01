@@ -1,3 +1,4 @@
+// Package database cung cap ket noi MySQL cho he thong log redaction.
 package database
 
 import (
@@ -8,13 +9,11 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-//
 var DB *sql.DB
 
+// ConnectDB mo ket noi MySQL va kiem tra bang ping.
 func ConnectDB() {
-	// Data Source Name
-	dsn := "root:123456@tcp(127.0.0.1:3306)/log_redaction_db"
-
+	dsn := "root:12345678@tcp(127.0.0.1:3306)/log_redaction_db"
 	var err error
 	DB, err = sql.Open("mysql", dsn)
 
