@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -14,9 +15,13 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-const API_URL = "http://localhost:8080/api/logs"
+const BASE_URL = "http://localhost:8080/api"
 
-// Khai báo cấu trúc dữ liệu để hứng JSON
+// Biến toàn cục lưu thông tin phiên làm việc
+var authToken string
+var currentUserRole string
+
+// Cấu trúc hứng dữ liệu
 type SystemLog struct {
 	ID          int    `json:"id"`
 	Timestamp   string `json:"timestamp"`
@@ -27,26 +32,84 @@ type SystemLog struct {
 }
 
 func main() {
-	// 1. Khởi tạo App và Cửa sổ
 	myApp := app.New()
-	window := myApp.NewWindow("🛡️ Hệ Thống Quản Lý Log Bảo Mật AES-128")
-	window.Resize(fyne.NewSize(900, 600))
+	window := myApp.NewWindow("🛡️ Hệ Thống Quản Lý Log Bảo Mật Kép (AES-KDF & JWT)")
+	window.Resize(fyne.NewSize(950, 650))
 
-	// Biến toàn cục lưu dữ liệu hiển thị trên bảng
+	// Khởi động vào màn hình Đăng Nhập
+	showLoginScreen(window)
+
+	window.ShowAndRun()
+}
+
+// ==========================================
+// MÀN HÌNH ĐĂNG NHẬP
+// ==========================================
+func showLoginScreen(window fyne.Window) {
+	inputUser := widget.NewEntry()
+	inputUser.SetPlaceHolder("Tài khoản (admin hoặc dev)")
+
+	inputPass := widget.NewPasswordEntry()
+	inputPass.SetPlaceHolder("Mật khẩu (123456)")
+
+	lblStatus := widget.NewLabel("")
+
+	btnLogin := widget.NewButton("🔐 Đăng Nhập", func() {
+		payload := map[string]string{
+			"username": inputUser.Text,
+			"password": inputPass.Text,
+		}
+		jsonData, _ := json.Marshal(payload)
+
+		resp, err := http.Post(BASE_URL+"/login", "application/json", bytes.NewBuffer(jsonData))
+		if err != nil {
+			lblStatus.SetText("❌ Không thể kết nối tới Server!")
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			var result map[string]string
+			json.NewDecoder(resp.Body).Decode(&result)
+
+			// Lưu Token và Role
+			authToken = result["token"]
+			currentUserRole = result["role"]
+
+			dialog.ShowInformation("Thành công", "Xin chào: "+currentUserRole, window)
+
+			// Đổi giao diện sang Bảng điều khiển chính
+			showDashboardScreen(window)
+		} else {
+			lblStatus.SetText("❌ Sai tài khoản hoặc mật khẩu!")
+		}
+	})
+
+	form := container.NewVBox(
+		widget.NewLabelWithStyle("ĐĂNG NHẬP HỆ THỐNG TRUNG TÂM", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewFormItem("Tài khoản:", inputUser).Widget,
+		widget.NewFormItem("Mật khẩu:", inputPass).Widget,
+		btnLogin,
+		lblStatus,
+	)
+
+	window.SetContent(container.NewCenter(form))
+}
+
+// ==========================================
+// MÀN HÌNH BẢNG ĐIỀU KHIỂN CHÍNH
+// ==========================================
+func showDashboardScreen(window fyne.Window) {
 	var tableData [][]string
 	header := []string{"ID", "Service", "IP Address", "API Token", "Message"}
 	tableData = append(tableData, header)
 
-	lblTime := widget.NewLabel("⏱️ Thời gian thực thi: 0 ms")
+	lblTime := widget.NewLabel("⏱️ Thời gian API: 0 ms")
+	lblUser := widget.NewLabelWithStyle(fmt.Sprintf("👤 Đang đăng nhập: %s", currentUserRole), fyne.TextAlignTrailing, fyne.TextStyle{Italic: true})
 
-	// ==========================================
-	// PHẦN 1: BẢNG HIỂN THỊ DỮ LIỆU
-	// ==========================================
 	table := widget.NewTable(
 		func() (int, int) { return len(tableData), 5 },
-		func() fyne.CanvasObject {
-			return widget.NewLabel("Template text for sizing")
-		},
+		func() fyne.CanvasObject { return widget.NewLabel("Template text for sizing") },
 		func(i widget.TableCellID, o fyne.CanvasObject) {
 			o.(*widget.Label).SetText(tableData[i.Row][i.Col])
 			if i.Row == 0 {
@@ -56,123 +119,119 @@ func main() {
 	)
 	table.SetColumnWidth(0, 50)
 	table.SetColumnWidth(1, 120)
-	table.SetColumnWidth(2, 150)
-	table.SetColumnWidth(3, 200)
+	table.SetColumnWidth(2, 160)
+	table.SetColumnWidth(3, 220)
 	table.SetColumnWidth(4, 300)
 
-	// Hàm hỗ trợ gọi API GET
+	// HÀM GỌI API (KÈM JWT TOKEN)
 	fetchData := func(endpoint string) {
 		start := time.Now()
-		resp, err := http.Get(endpoint)
+
+		req, _ := http.NewRequest("GET", BASE_URL+endpoint, nil)
+		req.Header.Set("Authorization", "Bearer "+authToken) // ⚠️ Gắn Token vào thẻ đi lại
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			dialog.ShowError(fmt.Errorf("Không thể kết nối Server! Chắc chắn Server đang chạy.\n%v", err), window)
+			dialog.ShowError(fmt.Errorf("Lỗi kết nối Server!"), window)
 			return
 		}
 		defer resp.Body.Close()
 
+		// Kiểm tra quyền
+		if resp.StatusCode == http.StatusForbidden {
+			dialog.ShowError(fmt.Errorf("⛔ BẠN KHÔNG CÓ QUYỀN TRUY CẬP TÍNH NĂNG NÀY (Chỉ Admin)"), window)
+			return
+		}
+
 		var logs []SystemLog
 		json.NewDecoder(resp.Body).Decode(&logs)
 
-		// Xóa dữ liệu cũ, giữ lại Header
 		tableData = [][]string{header}
 		for _, log := range logs {
-			row := []string{
-				fmt.Sprintf("%d", log.ID),
-				log.ServiceName,
-				log.IPAddress,
-				log.APIToken,
-				log.Message,
-			}
+			row := []string{fmt.Sprintf("%d", log.ID), log.ServiceName, log.IPAddress, log.APIToken, log.Message}
 			tableData = append(tableData, row)
 		}
 
 		elapsed := time.Since(start).Milliseconds()
-		lblTime.SetText(fmt.Sprintf("⏱️ Thời gian gọi API & Load bảng: %d ms", elapsed))
-		table.Refresh() // Bắt buộc gọi để vẽ lại bảng
+		lblTime.SetText(fmt.Sprintf("⏱️ Thời gian API & Load: %d ms", elapsed))
+		table.Refresh()
 	}
 
-	// ==========================================
-	// PHẦN 2: CÁC NÚT ĐIỀU KHIỂN (GET)
-	// ==========================================
-	btnRaw := widget.NewButton("1. Xem Chữ Thật", func() { fetchData(API_URL) })
-	btnStatic := widget.NewButton("2. Mask Dấu Sao (***)", func() { fetchData(API_URL + "/decrypted-mask") })
-	btnRandom := widget.NewButton("3. Mask Ngẫu Nhiên", func() { fetchData(API_URL + "/random-mask") })
-	btnInsert := widget.NewButton("4. Mask Chèn [REDACTED]", func() { fetchData(API_URL + "/insert-mask") })
+	// 4 Nút chức năng gọi 4 API
+	btnRaw := widget.NewButton("1. Xem Chữ Thật (Admin)", func() { fetchData("/logs/decrypted") })
+	btnStatic := widget.NewButton("2. Mask Dấu Sao (***)", func() { fetchData("/logs/static-mask") })
+	btnRandom := widget.NewButton("3. Mask Ngẫu Nhiên", func() { fetchData("/logs/random-mask") })
+	btnInsert := widget.NewButton("4. Mask Chèn [REDACTED]", func() { fetchData("/logs/insert-mask") })
 
 	actionBox := container.NewHBox(btnRaw, btnStatic, btnRandom, btnInsert)
 
-	// ==========================================
-	// PHẦN 3: FORM NHẬP DỮ LIỆU (POST)
-	// ==========================================
+	// Form thêm log
 	inputService := widget.NewEntry()
-	inputService.SetPlaceHolder("VD: PaymentAPI")
-
 	inputIP := widget.NewEntry()
-	inputIP.SetPlaceHolder("VD: 192.168.1.100")
-
 	inputToken := widget.NewEntry()
-	inputToken.SetPlaceHolder("VD: sk_live_secret_9999")
-
 	inputMsg := widget.NewEntry()
-	inputMsg.SetPlaceHolder("VD: Giao dịch thành công")
-
-	form := widget.NewForm(
-		widget.NewFormItem("Tên Service:", inputService),
-		widget.NewFormItem("Địa chỉ IP:", inputIP),
-		widget.NewFormItem("API Token:", inputToken),
-		widget.NewFormItem("Nội dung:", inputMsg),
-	)
-
-	btnPost := widget.NewButton("🚀 Bắn Data (Mã hóa AES vào DB)", func() {
-		if inputService.Text == "" || inputIP.Text == "" || inputToken.Text == "" {
-			dialog.ShowInformation("Thiếu thông tin", "Vui lòng điền đủ các trường!", window)
-			return
-		}
-
-		payload := map[string]string{
-			"service_name": inputService.Text,
-			"ip_address":   inputIP.Text,
-			"api_token":    inputToken.Text,
-			"message":      inputMsg.Text,
-		}
-		jsonData, _ := json.Marshal(payload)
-
-		start := time.Now()
-		resp, err := http.Post(API_URL, "application/json", bytes.NewBuffer(jsonData))
-
-		if err != nil || resp.StatusCode != http.StatusCreated {
-			dialog.ShowError(fmt.Errorf("Lỗi gửi dữ liệu!"), window)
-			return
-		}
-
-		elapsed := time.Since(start).Milliseconds()
-		dialog.ShowInformation("Thành công", fmt.Sprintf("Đã lưu và mã hóa an toàn!\nThời gian: %d ms", elapsed), window)
-
-		// Xóa trắng form và load lại bảng
-		inputService.SetText("")
-		inputIP.SetText("")
-		inputToken.SetText("")
-		inputMsg.SetText("")
-		fetchData(API_URL)
-	})
 
 	formBox := container.NewVBox(
-		widget.NewLabelWithStyle("📥 Thêm Log Mới", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		form,
-		btnPost,
+		widget.NewLabelWithStyle("📥 Bắn dữ liệu lên Server", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		widget.NewForm(
+			widget.NewFormItem("Tên Service:", inputService),
+			widget.NewFormItem("Địa chỉ IP:", inputIP),
+			widget.NewFormItem("API Token:", inputToken),
+			widget.NewFormItem("Nội dung:", inputMsg),
+		),
+		widget.NewButton("🚀 Mã hóa AES-KDF và Lưu DB", func() {
+			payload := map[string]string{
+				"service_name": inputService.Text, "ip_address": inputIP.Text,
+				"api_token": inputToken.Text, "message": inputMsg.Text,
+			}
+			jsonData, _ := json.Marshal(payload)
+
+			req, _ := http.NewRequest("POST", BASE_URL+"/logs", bytes.NewBuffer(jsonData))
+			req.Header.Set("Authorization", "Bearer "+authToken) // ⚠️ Gắn Token
+
+			start := time.Now()
+			resp, err := http.DefaultClient.Do(req)
+
+			if err != nil || resp.StatusCode != http.StatusCreated {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				dialog.ShowError(fmt.Errorf("Lỗi gửi dữ liệu: %s", string(bodyBytes)), window)
+				return
+			}
+
+			elapsed := time.Since(start).Milliseconds()
+			dialog.ShowInformation("Thành công", fmt.Sprintf("Đã mã hóa phái sinh và lưu DB!\nThời gian: %d ms", elapsed), window)
+
+			inputService.SetText("")
+			inputIP.SetText("")
+			inputToken.SetText("")
+			inputMsg.SetText("")
+
+			// Load lại bảng
+			if currentUserRole == "admin" {
+				fetchData("/logs/decrypted")
+			} else {
+				fetchData("/logs/static-mask")
+			}
+		}),
 	)
 
-	mainLayout := container.NewBorder(
-		container.NewVBox(formBox, widget.NewSeparator(), widget.NewLabelWithStyle("👁️ Xem Dữ Liệu", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), actionBox, lblTime), // Nằm trên cùng
-		nil,   
-		nil,   
-		nil,   
-		table, 
+	// Sắp xếp bố cục giao diện
+	topSection := container.NewVBox(
+		lblUser,
+		formBox,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("👁️ Xem Dữ Liệu", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		actionBox,
+		lblTime,
 	)
 
+	mainLayout := container.NewBorder(topSection, nil, nil, nil, table)
 	window.SetContent(mainLayout)
 
-	go fetchData(API_URL)
-
-	window.ShowAndRun()
+	// Lần đầu mở app, load bảng tùy theo quyền
+	if currentUserRole == "admin" {
+		go fetchData("/logs/decrypted")
+	} else {
+		go fetchData("/logs/static-mask")
+	}
 }

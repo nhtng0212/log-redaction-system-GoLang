@@ -11,24 +11,21 @@ const SecretKey = "LogMaskingKey123"
 
 // 1. NHÓM HÀM MÃ HÓA (DÙNG KHI LƯU VÀO DB)
 // MaskIP che giấu IP bằng thuật toán mã hóa AES-128
-func MaskIP(ip string) string {
-	return MaskDataWithAES(ip, SecretKey)
+func MaskIP(ip string, masterKey string, salt string) string {
+	return MaskDataWithAES(ip, masterKey, salt)
 }
 
-// MaskToken che giấu Token bằng thuật toán mã hóa AES-128
-func MaskToken(token string) string {
-	return MaskDataWithAES(token, SecretKey)
+func MaskToken(token string, masterKey string, salt string) string {
+	return MaskDataWithAES(token, masterKey, salt)
 }
 
-// 2. NHÓM HÀM GIẢI MÃ (DÙNG KHI ĐỌC TỪ DB)
-// DecryptIP giải mã IP từ chuỗi mã hóa Hex
-func DecryptIP(encryptedIP string) string {
-	return DecryptDataWithAES(encryptedIP, SecretKey)
+// 2. NHÓM HÀM GIẢI MÃ (Truyền thêm MasterKey và Salt vào)
+func DecryptIP(encryptedIP string, masterKey string, salt string) string {
+	return DecryptDataWithAES(encryptedIP, masterKey, salt)
 }
 
-// DecryptToken giải mã Token từ chuỗi mã hóa Hex
-func DecryptToken(encryptedToken string) string {
-	return DecryptDataWithAES(encryptedToken, SecretKey)
+func DecryptToken(encryptedToken string, masterKey string, salt string) string {
+	return DecryptDataWithAES(encryptedToken, masterKey, salt)
 }
 
 // 3. NHÓM HÀM STATIC MASKING (Che bằng dấu ***)

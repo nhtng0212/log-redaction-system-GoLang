@@ -3,9 +3,11 @@ package masker
 import (
 	"bytes"
 	"encoding/hex"
+	"math/rand"
+	"time"
 )
 
-// Khai báo SBOX và RCON (Giống hệt Python)
+// Khai báo SBOX và RCON
 var sbox = [256]byte{
 	0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
 	0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
@@ -112,38 +114,6 @@ func aesEncryptBlock(block []byte, roundKeys [][]byte) []byte {
 	return state
 }
 
-// MaskDataWithAES là hàm chính bọc toàn bộ chuỗi string -> mã hóa AES -> trả về Hex String
-func MaskDataWithAES(rawData string, secretKey string) string {
-	keyBytes := []byte(secretKey)
-	// Đảm bảo key đúng 16 byte
-	if len(keyBytes) < 16 {
-		padding := bytes.Repeat([]byte{0}, 16-len(keyBytes))
-		keyBytes = append(keyBytes, padding...)
-	} else {
-		keyBytes = keyBytes[:16]
-	}
-
-	dataBytes := []byte(rawData)
-
-	// PKCS#7 Padding
-	padLen := 16 - (len(dataBytes) % 16)
-	padding := bytes.Repeat([]byte{byte(padLen)}, padLen)
-	dataToEncrypt := append(dataBytes, padding...)
-
-	roundKeys := keyExpansion(keyBytes)
-	var encrypted []byte
-
-	// Mã hóa từng khối 16 byte
-	for i := 0; i < len(dataToEncrypt); i += 16 {
-		block := dataToEncrypt[i : i+16]
-		encryptedBlock := aesEncryptBlock(block, roundKeys)
-		encrypted = append(encrypted, encryptedBlock...)
-	}
-
-	// Trả về chuỗi Hex để dễ dàng lưu trữ và hiển thị JSON
-	return hex.EncodeToString(encrypted)
-}
-
 // ==========================================
 // --- PHẦN GIẢI MÃ (DECRYPTION) ---
 // ==========================================
@@ -157,7 +127,7 @@ func init() {
 	}
 }
 
-// mulGf là phép nhân trên trường Galois (Dịch từ mul_gf của Python)
+// mulGf là phép nhân trên trường Galois
 func mulGf(a, b byte) byte {
 	var res byte
 	for i := 0; i < 8; i++ {
@@ -220,9 +190,25 @@ func aesDecryptBlock(block []byte, roundKeys [][]byte) []byte {
 	return state
 }
 
-// DecryptDataWithAES nhận chuỗi Hex đã mã hóa, giải mã AES và trả về văn bản gốc
-func DecryptDataWithAES(hexStr string, secretKey string) string {
-	keyBytes := []byte(secretKey)
+// ==========================================
+// CƠ CHẾ PHÁI SINH KHÓA (KDF) VÀ GỌI AES
+// ==========================================
+
+// GenerateSalt sinh ra một chuỗi ngẫu nhiên 16 byte (định dạng Hex)
+func GenerateSalt() string {
+	rand.Seed(time.Now().UnixNano())
+	salt := make([]byte, 16)
+	for i := 0; i < 16; i++ {
+		salt[i] = byte(rand.Intn(256))
+	}
+	return hex.EncodeToString(salt)
+}
+
+// DeriveKey dùng hàm mã hóa khối (aesEncryptBlock) để trộn MasterKey và Salt.
+func DeriveKey(masterKey string, saltHex string) []byte {
+	keyBytes := []byte(masterKey)
+
+	// Đảm bảo Master Key đủ 16 byte
 	if len(keyBytes) < 16 {
 		padding := bytes.Repeat([]byte{0}, 16-len(keyBytes))
 		keyBytes = append(keyBytes, padding...)
@@ -230,13 +216,56 @@ func DecryptDataWithAES(hexStr string, secretKey string) string {
 		keyBytes = keyBytes[:16]
 	}
 
+	saltBytes, err := hex.DecodeString(saltHex)
+	if err != nil || len(saltBytes) != 16 {
+		saltBytes = make([]byte, 16) // Fallback an toàn
+	}
+
+	// Lấy Master Key làm chìa khóa, đi mã hóa chính cái Salt đó
+	roundKeys := keyExpansion(keyBytes)
+	derivedKey := aesEncryptBlock(saltBytes, roundKeys) // Kết quả là 1 mảng 16 byte xáo trộn
+
+	return derivedKey
+}
+
+// MaskDataWithAES nhận MasterKey và SaltHex để mã hóa dữ liệu
+func MaskDataWithAES(rawData string, masterKey string, saltHex string) string {
+	// Phái sinh ra khóa AES riêng biệt
+	derivedKey := DeriveKey(masterKey, saltHex)
+
+	dataBytes := []byte(rawData)
+
+	// PKCS#7 Padding
+	padLen := 16 - (len(dataBytes) % 16)
+	padding := bytes.Repeat([]byte{byte(padLen)}, padLen)
+	dataToEncrypt := append(dataBytes, padding...)
+
+	// Dùng Khóa Phái Sinh để mã hóa dữ liệu thực
+	roundKeys := keyExpansion(derivedKey)
+	var encrypted []byte
+
+	for i := 0; i < len(dataToEncrypt); i += 16 {
+		block := dataToEncrypt[i : i+16]
+		encryptedBlock := aesEncryptBlock(block, roundKeys)
+		encrypted = append(encrypted, encryptedBlock...)
+	}
+
+	return hex.EncodeToString(encrypted)
+}
+
+// DecryptDataWithAES nhận MasterKey và SaltHex để giải mã
+func DecryptDataWithAES(hexStr string, masterKey string, saltHex string) string {
+	// Tái tạo lại chính xác Khóa Phái Sinh
+	derivedKey := DeriveKey(masterKey, saltHex)
+
 	encrypted, err := hex.DecodeString(hexStr)
-	// Nếu không phải chuỗi Hex hợp lệ (hoặc dữ liệu cũ), trả về nguyên bản để tránh crash
-	if err != nil || len(encrypted)%16 != 0 {
+	// Nếu dữ liệu rỗng hoặc sai định dạng Hex, trả về nguyên bản
+	if err != nil || len(encrypted)%16 != 0 || len(encrypted) == 0 {
 		return hexStr
 	}
 
-	roundKeys := keyExpansion(keyBytes)
+	// Dùng Khóa Phái Sinh để giải mã
+	roundKeys := keyExpansion(derivedKey)
 	var decrypted []byte
 
 	for i := 0; i < len(encrypted); i += 16 {

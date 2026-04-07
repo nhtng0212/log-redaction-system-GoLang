@@ -4,107 +4,131 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"time"
 
 	"log-redaction-system/database"
 	"log-redaction-system/models"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
-// LogsHandler là trạm trung chuyển kiểm tra xem client đang gửi POST (Ghi) hay GET (Đọc)
-func LogsHandler(w http.ResponseWriter, r *http.Request) {
+// ==========================================
+// 1. API: ĐĂNG NHẬP (CẤP TOKEN)
+// ==========================================
+func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
-	// ==========================================
-	// KỊCH BẢN 1: CÁC MICROSERVICE BẮN LOG TỚI (POST)
-	// ==========================================
-	if r.Method == http.MethodPost {
-		var incomingLog models.SystemLog
-
-		// Đọc cục JSON từ request đập vào Struct của Go
-		err := json.NewDecoder(r.Body).Decode(&incomingLog)
-		if err != nil {
-			http.Error(w, `{"error": "Dữ liệu JSON không hợp lệ"}`, http.StatusBadRequest)
-			return
-		}
-
-		// Gọi hàm mã hóa và lưu vào Database
-		err = database.SaveLog(incomingLog)
-		if err != nil {
-			http.Error(w, `{"error": "Lỗi khi lưu vào Database"}`, http.StatusInternalServerError)
-			return
-		}
-
-		// Trả về mã 201 Created báo hiệu đã tạo thành công
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"message": "Log đã được mã hóa AES và lưu trữ an toàn!"}`))
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
-	// ==========================================
-	// KỊCH BẢN 2: QUẢN TRỊ VIÊN ĐỌC LOG (GET)
-	// ==========================================
-	if r.Method == http.MethodGet {
-		// Gọi hàm lấy dữ liệu từ DB lên và GIẢI MÃ
-		decryptedLogs := database.GetAndDecryptLogs()
+	var req models.LoginRequest
+	json.NewDecoder(r.Body).Decode(&req)
 
-		// Đóng gói thành JSON trả về cho Admin
-		jsonResult, _ := json.MarshalIndent(decryptedLogs, "", "  ")
-		w.Write(jsonResult)
+	var user models.User
+	query := "SELECT id, username, role FROM users WHERE username=? AND password=?"
+	err := database.DB.QueryRow(query, req.Username, req.Password).Scan(&user.ID, &user.Username, &user.Role)
+
+	if err != nil {
+		http.Error(w, `{"error": "Sai tài khoản hoặc mật khẩu"}`, http.StatusUnauthorized)
 		return
 	}
 
-	// Chặn các method khác (như PUT, DELETE)
-	http.Error(w, `{"error": "Method không được hỗ trợ"}`, http.StatusMethodNotAllowed)
+	// Tạo thẻ JWT có thời hạn 24h
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "ACT_Tung_Nguyen_JWT_Secret_2026"
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"username": user.Username,
+		"role":     user.Role,
+		"exp":      time.Now().Add(time.Hour * 24).Unix(),
+	})
+	tokenString, _ := token.SignedString([]byte(jwtSecret))
+
+	json.NewEncoder(w).Encode(map[string]string{"token": tokenString, "role": user.Role})
 }
 
-// RawMaskHandler xử lý API 1: Lấy thô và Mask ***
-func RawMaskHandler(w http.ResponseWriter, r *http.Request) {
+// ==========================================
+// 2. API: BẮN LOG TỚI SERVER (POST)
+// ==========================================
+func CreateLogHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	logs := database.GetRawAndStaticMaskLogs()
-	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
-	w.Write(jsonResult)
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error": "Chỉ hỗ trợ phương thức POST"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var incomingLog models.SystemLog
+	if err := json.NewDecoder(r.Body).Decode(&incomingLog); err != nil {
+		http.Error(w, `{"error": "Dữ liệu JSON không hợp lệ"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := database.SaveLog(incomingLog); err != nil {
+		http.Error(w, `{"error": "Lỗi khi lưu vào Database"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(`{"message": "Log đã được mã hóa AES-KDF và lưu trữ an toàn!"}`))
 }
 
-// DecryptMaskHandler xử lý API 2: Giải mã và Mask ***
-func DecryptMaskHandler(w http.ResponseWriter, r *http.Request) {
+// ==========================================
+// 3. CÁC API ĐỌC DỮ LIỆU (GET)
+// ==========================================
+
+func DecryptedLogsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	logs := database.GetAndDecryptLogs()
+	json.NewEncoder(w).Encode(logs)
+}
+
+func StaticMaskHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	logs := database.GetDecryptAndStaticMaskLogs()
-	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
-	w.Write(jsonResult)
+	json.NewEncoder(w).Encode(logs)
 }
 
-// Handler cho thuật toán Random Mask
 func RandomMaskHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	logs := database.GetRandomMaskLogs()
-	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
-	w.Write(jsonResult)
+	json.NewEncoder(w).Encode(logs)
 }
 
-// Handler cho thuật toán Insert Mask
 func InsertMaskHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	logs := database.GetInsertMaskLogs()
-	jsonResult, _ := json.MarshalIndent(logs, "", "  ")
-	w.Write(jsonResult)
+	json.NewEncoder(w).Encode(logs)
 }
 
+// ==========================================
+// 4. KHỞI ĐỘNG SERVER VÀ ĐỊNH TUYẾN
+// ==========================================
 func StartServer() {
-	// API chuẩn (GET/POST)
-	http.HandleFunc("/api/logs", LogsHandler)
+	http.Handle("/", http.FileServer(http.Dir("./web")))
 
-	// Các API Masking Đa hình
-	http.HandleFunc("/api/logs/raw-mask", RawMaskHandler)
-	http.HandleFunc("/api/logs/decrypted-mask", DecryptMaskHandler)
-	http.HandleFunc("/api/logs/random-mask", RandomMaskHandler)
-	http.HandleFunc("/api/logs/insert-mask", InsertMaskHandler)
+	// API Đăng nhập không cần Token bảo vệ
+	http.HandleFunc("/api/login", LoginHandler)
 
-	fmt.Println("🌐 Centralized Log Server đang chạy tại: http://localhost:8080")
-	fmt.Println("---------------------------------------------------------")
-	fmt.Println("👉 1. Xem chữ thật              : http://localhost:8080/api/logs")
-	fmt.Println("👉 2. Mask dấu sao (***)        : http://localhost:8080/api/logs/decrypted-mask")
-	fmt.Println("👉 3. Mask Ngẫu Nhiên (Random)  : http://localhost:8080/api/logs/random-mask")
-	fmt.Println("👉 4. Mask Chèn nhãn [REDACTED] : http://localhost:8080/api/logs/insert-mask")
-	fmt.Println("---------------------------------------------------------")
+	// API Lưu Log
+	http.HandleFunc("/api/logs", AuthMiddleware("dev", CreateLogHandler))
+
+	// API Xem Chữ Thật: Cửa cực kỳ nghiêm ngặt, CHỈ ADMIN
+	http.HandleFunc("/api/logs/decrypted", AuthMiddleware("admin", DecryptedLogsHandler))
+
+	// API Xem Mask: Dev (và Admin) đều xem được
+	http.HandleFunc("/api/logs/static-mask", AuthMiddleware("dev", StaticMaskHandler))
+	http.HandleFunc("/api/logs/random-mask", AuthMiddleware("dev", RandomMaskHandler))
+	http.HandleFunc("/api/logs/insert-mask", AuthMiddleware("dev", InsertMaskHandler))
+
+	fmt.Println("=========================================================")
+	fmt.Println("🛡️  SERVER BẢO MẬT AES-KDF & JWT ĐANG CHẠY TẠI PORT 8080")
+	fmt.Println("=========================================================")
+	fmt.Println("🌐 TRUY CẬP WEB TẠI : http://localhost:8080") // Dòng thông báo mới
+	fmt.Println("=========================================================")
 
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
